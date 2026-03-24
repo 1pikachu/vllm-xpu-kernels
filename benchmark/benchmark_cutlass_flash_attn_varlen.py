@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import itertools
 import gc
 import torch
 import triton
@@ -9,8 +8,9 @@ import triton
 from vllm_xpu_kernels.flash_attn_interface import flash_attn_varlen_func
 from benchmark.src.flash_attn_interface_ import flash_attn_varlen_func_CalKernelTime
 from tests.flash_attn.test_flash_attn_varlen_func import ref_paged_attn
-from tests.utils import seed_everything
-from tests.utils import parse_args
+from tests.utils import seed_everything, parse_args
+from benchmark.src.get_model_config import gen_cutlass_flash_attn_varlen_correctness_configs as gen_correctness_config
+from benchmark.src.get_model_config import gen_cutlass_flash_attn_varlen_perf_configs as gen_perf_configs
 
 
 DEVICE = "xpu"
@@ -393,93 +393,6 @@ def get_benchmark_varlen_with_paged_kv(iterations=20):
         )
 
     return benchmark
-
-
-def gen_correctness_config():
-    # seq_lens = [[(1, 1328), (5, 18), (129, 463)]]
-    num_seqs = [3]
-    query_lens = ["1,5,129"]
-    kv_lens = ["1328,18,463"]
-
-    num_heads = [(4, 4), (8, 2), (10, 2), (16, 1)]
-    head_size = [64, 128, 192, 256]
-    block_size = [64, 128]
-    window_size = [(-1, 127), (127, -1), (64, 64), (-1, -1)]
-    dtype = [torch.float16, torch.bfloat16]
-    soft_cap = [None]
-    num_blocks = [32768, 2048]
-    fa_versions = [2]
-    q_dtype = [None]
-    is_sink = [False, True]
-    is_causal = [False, True]
-    is_paged = [False, True]
-    fp8_dtype = [torch.float8_e5m2, torch.float8_e4m3fn, None]
-
-    print("Final configuration:")
-    print(f"num_seqs: {num_seqs}")
-    print(f"query_lens: {query_lens}")
-    print(f"kv_lens: {kv_lens}")
-    print(f"num_heads: {num_heads}")
-    print(f"head_size: {head_size}")
-    print(f"block_size: {block_size}")
-    print(f"window_size: {window_size}")
-    print(f"dtype: {dtype}")
-    print(f"soft_cap: {soft_cap}")
-    print(f"num_blocks: {num_blocks}")
-    print(f"fa_versions: {fa_versions}")
-    print(f"q_dtype: {q_dtype}")
-    print(f"is_sink: {is_sink}")
-    print(f"is_causal: {is_causal}")
-    print(f"is_paged: {is_paged}")
-    print(f"fp8_dtype: {fp8_dtype}")
-
-    configs = list(
-        itertools.product(num_seqs, query_lens, kv_lens, num_heads, head_size, block_size, window_size, dtype, soft_cap, num_blocks, fa_versions, q_dtype, is_sink, is_causal, is_paged, fp8_dtype)
-    )
-    return configs
-
-
-def gen_perf_configs():
-    num_seqs = [3]
-    query_lens = ["1024,2048,2048"]
-    kv_lens = ["1024,1024,2048"]
-
-    num_heads = [(32, 8)]
-    head_size = [128]
-    block_size = [64, 128]
-    window_size = [(-1, -1)]
-    dtype = [torch.float16, torch.bfloat16]
-    soft_cap = [None]
-    num_blocks = [16324]
-    fa_versions = [2]
-    q_dtype = [None]
-    is_sink = [False, True]
-    is_causal = [False, True]
-    is_paged = [False, True]
-    fp8_dtype = [torch.float8_e5m2, torch.float8_e4m3fn, None]
-
-    print("Final configuration:")
-    print(f"num_seqs: {num_seqs}")
-    print(f"query_lens: {query_lens}")
-    print(f"kv_lens: {kv_lens}")
-    print(f"num_heads: {num_heads}")
-    print(f"head_size: {head_size}")
-    print(f"block_size: {block_size}")
-    print(f"window_size: {window_size}")
-    print(f"dtype: {dtype}")
-    print(f"soft_cap: {soft_cap}")
-    print(f"num_blocks: {num_blocks}")
-    print(f"fa_versions: {fa_versions}")
-    print(f"q_dtype: {q_dtype}")
-    print(f"is_sink: {is_sink}")
-    print(f"is_causal: {is_causal}")
-    print(f"is_paged: {is_paged}")
-    print(f"fp8_dtype: {fp8_dtype}")
-
-    configs = list(
-        itertools.product(num_seqs, query_lens, kv_lens, num_heads, head_size, block_size, window_size, dtype, soft_cap, num_blocks, fa_versions, q_dtype, is_sink, is_causal, is_paged, fp8_dtype)
-    )
-    return configs
 
 
 def filter_configs(configs):

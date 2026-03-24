@@ -1,17 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import itertools
 import gc
 import torch
 import triton
 import triton.testing
-from tests.utils import seed_everything, get_model_config
+from tests.utils import seed_everything
 from vllm_xpu_kernels.fused_moe_interface import xpu_fused_moe
 from benchmark.src.fused_moe_interface_ import xpu_fused_moe_CalKernelTime
 from tests.utils import parse_args
 from tests.ops.fp8_quant_op import scaled_fp8_quant
 from tests.fused_moe.test_fused_moe import ref_fused_moe
+from benchmark.src.get_model_config import gen_cutlass_fused_moe_correctness_configs as gen_correctness_config
+from benchmark.src.get_model_config import gen_cutlass_fused_moe_perf_configs as gen_perf_configs
 
 
 DEVICE = "xpu"
@@ -251,63 +252,6 @@ def get_benchmark(iterations):
     return benchmark
 
 
-def get_correctness_configs():
-    mnk =[
-        (1, 5120, 8192),
-        (4, 5120, 8192),
-        (16, 5120, 8192),
-        (1024, 5120, 8192),
-        (8192, 5120, 8192),
-    ]
-    experts = [16]
-    topk = [1]
-    dtype = [torch.float16, torch.bfloat16]
-    w_dtype = [torch.float8_e5m2, torch.float8_e4m3fn, None]
-    has_bias = [True, False]
-
-    configs = list(
-        itertools.product(mnk, experts, topk, dtype, w_dtype, has_bias))
-    return configs
-
-
-def get_performance_configs():
-    configs = []
-    topk = [1]
-    dtype = [torch.float16, torch.bfloat16]
-    w_dtype = [torch.float8_e5m2, torch.float8_e4m3fn, None]
-    has_bias = [True, False]
-    input_lens = [1, 4, 16, 1024, 8192]
-
-    # TODO: get "OpenGVLab/InternVL3_5-8B", "deepseek-ai/DeepSeek-OCR" config failed, need to investigate
-    model_lists = ["deepseek-ai/DeepSeek-R1-Distill-Llama-8B", "openbmb/MiniCPM-V-4", "Qwen/Qwen3-30B-A3B", "Qwen/Qwen2.5-VL-32B-Instruct", "deepseek-ai/DeepSeek-V2-Lite"]
-    for model in model_lists:
-        model_config = get_model_config(model, tp_size=1)
-        if model_config["is_moe"] == False:
-            continue
-
-        hidden_size = model_config["hidden_size"]
-        intermediate_size = model_config["intermediate_size"]
-        mnk = list(zip(input_lens, [hidden_size] * len(input_lens), [intermediate_size] * len(input_lens)))
-
-        configs += list(
-            itertools.product(mnk, [model_config["moe_config"]["moe_top_k"]], topk, dtype, w_dtype, has_bias))
-    configs = set(configs)  # remove duplicates
-    def sort_key(x):
-        (m, n, k), moe_topk, topk_, dtype_, w_dtype_, bias_ = x
-
-        return (
-            m, n, k,
-            moe_topk,
-            topk_,
-            str(dtype_),
-            str(w_dtype_),
-            bias_
-        )
-
-    configs = sorted(configs, key=sort_key)
-    return configs
-
-
 if __name__ == "__main__":
 
     args = parse_args()
@@ -315,7 +259,7 @@ if __name__ == "__main__":
     seed_everything(seed)
     iterations = 20
 
-    configs = get_correctness_configs()
+    configs = gen_correctness_config()
 
     for config in configs:
         try:
@@ -324,7 +268,7 @@ if __name__ == "__main__":
             print("Error in config: ", config, " error: ", e)
         clear_xpu_cache()
 
-    configs = get_performance_configs()
+    configs = gen_perf_configs()
     benchmark = get_benchmark(iterations=iterations)
     # Run performance benchmark
     benchmark.run(print_data=True, save_path=args.save_path)
