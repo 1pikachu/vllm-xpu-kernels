@@ -11,8 +11,8 @@ from benchmark.src.flash_attn_interface_ import flash_attn_varlen_func_CalKernel
 from tests.flash_attn.test_flash_attn_varlen_func import ref_paged_attn
 from tests.utils import seed_everything
 from tests.utils import parse_args
-from benchmark.src.get_model_config import gen_cutlass_flash_attn_varlen_correctness_configs as gen_correctness_config
-from benchmark.src.get_model_config import gen_cutlass_flash_attn_varlen_perf_configs as gen_perf_configs
+from benchmark.src.get_model_config import gen_cutlass_flash_attn_decode_correctness_configs as gen_correctness_config
+from benchmark.src.get_model_config import gen_cutlass_flash_attn_decode_perf_configs as gen_perf_configs
 
 
 DEVICE = "xpu"
