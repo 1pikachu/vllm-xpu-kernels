@@ -105,38 +105,118 @@ def gen_cutlass_flash_attn_varlen_perf_configs():
     is_paged = [False, True]
     fp8_dtype = [torch.float8_e5m2, torch.float8_e4m3fn, None]
 
+    # configs = []
+    # for model in model_lists:
+    #     model_config = get_model_config(model, tp_size=1)
+    #     head_size = [model_config["head_dim"]]
+    #     num_heads = [(model_config["num_attention_heads"], model_config["num_key_value_heads"])]
+
+    #     configs += list(
+    #         itertools.product(num_seqs, query_lens, kv_lens, num_heads, head_size, block_size, window_size, dtype, soft_cap, num_blocks, fa_versions, q_dtype, is_sink, is_causal, is_paged, fp8_dtype)
+    #     )
+    # configs = set(configs)  # remove duplicates
+    # def sort_key(x):
+    #     (num_seq, query_len, kv_len, num_head, head_size, block_size, window_size, dtype_, soft_cap, num_blocks, fa_version, q_dtype, is_sink, is_causal, is_paged, fp8_dtype) = x
+
+    #     return (
+    #         num_seq,
+    #         query_len,
+    #         kv_len,
+    #         num_head,
+    #         head_size,
+    #         block_size,
+    #         window_size,
+    #         str(dtype_),
+    #         soft_cap if soft_cap is not None else -1,
+    #         num_blocks,
+    #         fa_version,
+    #         str(q_dtype),
+    #         is_sink,
+    #         is_causal,
+    #         is_paged,
+    #         str(fp8_dtype)
+    #     )
+    # configs = sorted(configs, key=sort_key)
+
+    num_heads = [(32, 8)]
+    head_size = [128]
+    configs = list(
+        itertools.product(num_seqs, query_lens, kv_lens, num_heads, head_size, block_size, window_size, dtype, soft_cap, num_blocks, fa_versions, q_dtype, is_sink, is_causal, is_paged, fp8_dtype)
+    )
+    return configs
+
+
+def gen_cutlass_flash_attn_decode_correctness_configs():
+    # seq_lens = [[(1, 1025)], [(1, 523), (1, 37), (1, 2011)], [(1, 13000)],
+    #             [(1, 523), (1, 37), (1, 2011), (1, 5000)]]
+    seq_lens = ["1,1,1025", "3,1+1+1,523+37+2011", "1,1,13000", "4,1+1+1+1,523+37+2011+5000"]
+    num_heads = [(4, 4), (8, 2), (10, 2), (16, 1)]
+    head_size = [64, 128, 192, 256]
+    block_size = [64, 128]
+    dtype = [torch.float16, torch.bfloat16]
+    soft_cap = [None]
+    num_blocks = [32768, 2048]
+    fa_versions = [2]
+    q_dtype = [None]
+    is_sink = [False, True]
+
+    configs = list(
+        itertools.product(seq_lens, num_heads, head_size, block_size, dtype, soft_cap,
+                          num_blocks, fa_versions, q_dtype, is_sink)
+    )
+    return configs
+
+
+def gen_cutlass_flash_attn_decode_perf_configs():
+    seq_lens = [
+        "1,1,4096",
+        "8,1+1+1+1+1+1+1+1,128+256+512+1024+2048+4096+8192+16384",
+        "32," + "+".join(["1"]*32) + "," + "+".join(["512"]*32)
+    ]
+    num_heads = [(4, 4), (16, 1)]
+    head_size = [64, 128, 256]
+    block_size = [64, 128]
+    dtype = [torch.float16, torch.bfloat16]
+    soft_cap = [None]
+    num_blocks = [2048]
+    fa_versions = [2]
+    q_dtype = [None]
+    is_sink = [False, True]
+
     configs = []
-    num_heads = []
-    head_size = []
     for model in model_lists:
         model_config = get_model_config(model, tp_size=1)
         head_size = [model_config["head_dim"]]
         num_heads = [(model_config["num_attention_heads"], model_config["num_key_value_heads"])]
 
         configs += list(
-            itertools.product(num_seqs, query_lens, kv_lens, num_heads, head_size, block_size, window_size, dtype, soft_cap, num_blocks, fa_versions, q_dtype, is_sink, is_causal, is_paged, fp8_dtype)
+            itertools.product(seq_lens, num_heads, head_size, block_size, dtype, soft_cap,
+                          num_blocks, fa_versions, q_dtype, is_sink)
         )
     configs = set(configs)  # remove duplicates
     def sort_key(x):
-        (num_seq, query_len, kv_len, num_head, head_size, block_size, window_size, dtype_, soft_cap, num_blocks, fa_version, q_dtype, is_sink, is_causal, is_paged, fp8_dtype) = x
+        (seq_len, num_head, head_size, block_size, dtype_, soft_cap, num_blocks, fa_version, q_dtype, is_sink) = x
 
         return (
-            num_seq,
-            query_len,
-            kv_len,
+            seq_len,
             num_head,
             head_size,
             block_size,
-            window_size,
             str(dtype_),
             soft_cap if soft_cap is not None else -1,
             num_blocks,
             fa_version,
             str(q_dtype),
-            is_sink,
-            is_causal,
-            is_paged,
-            str(fp8_dtype)
+            is_sink
         )
     configs = sorted(configs, key=sort_key)
+
+
+    # seq_lens = ["1,1,1025", "3,1+1+1,523+37+2011", "1,1,13000"]
+    # num_heads = [(4, 4), (16, 1)]
+    # head_size = [64, 128, 256]
+    # configs = list(
+    #     itertools.product(seq_lens, num_heads, head_size, block_size, dtype, soft_cap,
+    #                       num_blocks, fa_versions, q_dtype, is_sink)
+    # )
     return configs

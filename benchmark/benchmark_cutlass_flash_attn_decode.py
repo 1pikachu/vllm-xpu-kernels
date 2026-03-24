@@ -269,68 +269,6 @@ def get_benchmark_decode_with_paged_kv(iterations=20):
     return benchmark
 
 
-def gen_correctness_config():
-    # seq_lens = [[(1, 1025)], [(1, 523), (1, 37), (1, 2011)], [(1, 13000)],
-    #             [(1, 523), (1, 37), (1, 2011), (1, 5000)]]
-    seq_lens = ["1,1,1025", "3,1+1+1,523+37+2011", "1,1,13000", "4,1+1+1+1,523+37+2011+5000"]
-    num_heads = [(4, 4), (8, 2), (10, 2), (16, 1)]
-    head_size = [64, 128, 192, 256]
-    block_size = [64, 128]
-    dtype = [torch.float16, torch.bfloat16]
-    soft_cap = [None]
-    num_blocks = [32768, 2048]
-    fa_versions = [2]
-    q_dtype = [None]
-    is_sink = [False, True]
-
-    print("Final configuration:")
-    print("seq_lens: ", seq_lens)
-    print("num_heads: ", num_heads)
-    print("head_size: ", head_size)
-    print("block_size: ", block_size)
-    print("dtype: ", dtype)
-    print("soft_cap: ", soft_cap)
-    print("num_blocks: ", num_blocks)
-    print("fa_versions: ", fa_versions)
-    print("q_dtype: ", q_dtype)
-    print("is_sink: ", is_sink)
-    configs = list(
-        itertools.product(seq_lens, num_heads, head_size, block_size, dtype, soft_cap,
-                          num_blocks, fa_versions, q_dtype, is_sink)
-    )
-    return configs
-
-
-def gen_perf_configs():
-    seq_lens = ["1,1,1025", "3,1+1+1,523+37+2011", "1,1,13000"]
-    num_heads = [(4, 4), (16, 1)]
-    head_size = [64, 128, 256]
-    block_size = [64, 128]
-    dtype = [torch.float16, torch.bfloat16]
-    soft_cap = [None]
-    num_blocks = [2048]
-    fa_versions = [2]
-    q_dtype = [None]
-    is_sink = [False, True]
-
-    print("Final configuration:")
-    print("seq_lens: ", seq_lens)
-    print("num_heads: ", num_heads)
-    print("head_size: ", head_size)
-    print("block_size: ", block_size)
-    print("dtype: ", dtype)
-    print("soft_cap: ", soft_cap)
-    print("num_blocks: ", num_blocks)
-    print("fa_versions: ", fa_versions)
-    print("q_dtype: ", q_dtype)
-    print("is_sink: ", is_sink)
-    configs = list(
-        itertools.product(seq_lens, num_heads, head_size, block_size, dtype, soft_cap,
-                          num_blocks, fa_versions, q_dtype, is_sink)
-    )
-    return configs
-
-
 def filter_configs(configs):
     new_configs = []
     for config in configs:
