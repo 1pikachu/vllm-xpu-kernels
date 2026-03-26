@@ -17,19 +17,19 @@ def gen_cutlass_fused_moe_correctness_configs():
     ]
     experts = [16]
     topk = [1]
-    dtype = [torch.float16, torch.bfloat16]
+    x_dtype = [torch.float16, torch.bfloat16]
     w_dtype = [torch.float8_e5m2, torch.float8_e4m3fn, None]
     has_bias = [True, False]
 
     configs = list(
-        itertools.product(mnk, experts, topk, dtype, w_dtype, has_bias))
+        itertools.product(mnk, experts, topk, x_dtype, w_dtype, has_bias))
     return configs
 
 
 def gen_cutlass_fused_moe_perf_configs():
     configs = []
     topk = [1]
-    dtype = [torch.float16, torch.bfloat16]
+    x_dtype = [torch.float16, torch.bfloat16]
     w_dtype = [torch.float8_e5m2, torch.float8_e4m3fn, None]
     has_bias = [True, False]
     input_lens = [1, 4, 16, 1024, 8192]
@@ -44,16 +44,16 @@ def gen_cutlass_fused_moe_perf_configs():
         mnk = list(zip(input_lens, [hidden_size] * len(input_lens), [intermediate_size] * len(input_lens)))
 
         configs += list(
-            itertools.product(mnk, [model_config["moe_config"]["moe_top_k"]], topk, dtype, w_dtype, has_bias))
+            itertools.product(mnk, [model_config["moe_config"]["moe_top_k"]], topk, x_dtype, w_dtype, has_bias))
     configs = set(configs)  # remove duplicates
     def sort_key(x):
-        (m, n, k), moe_topk, topk_, dtype_, w_dtype_, bias_ = x
+        (m, n, k), moe_topk, topk_, x_dtype_, w_dtype_, bias_ = x
 
         return (
             m, n, k,
             moe_topk,
             topk_,
-            str(dtype_),
+            str(x_dtype_),
             str(w_dtype_),
             bias_
         )
@@ -72,7 +72,7 @@ def gen_cutlass_flash_attn_varlen_correctness_configs():
     head_size = [64, 128, 192, 256]
     block_size = [64, 128]
     window_size = [(-1, 127), (127, -1), (64, 64), (-1, -1)]
-    dtype = [torch.float16, torch.bfloat16]
+    output_dtype = [torch.float16, torch.bfloat16]
     soft_cap = [None]
     num_blocks = [32768, 16324, 2048]
     fa_versions = [2]
@@ -80,10 +80,10 @@ def gen_cutlass_flash_attn_varlen_correctness_configs():
     is_sink = [False, True]
     is_causal = [False, True]
     is_paged = [False, True]
-    fp8_dtype = [torch.float8_e5m2, torch.float8_e4m3fn, None]
+    kv_dtype = [torch.float8_e5m2, torch.float8_e4m3fn, None]
 
     configs = list(
-        itertools.product(num_seqs, query_lens, kv_lens, num_heads, head_size, block_size, window_size, dtype, soft_cap, num_blocks, fa_versions, q_dtype, is_sink, is_causal, is_paged, fp8_dtype)
+        itertools.product(num_seqs, query_lens, kv_lens, num_heads, head_size, block_size, window_size, output_dtype, soft_cap, num_blocks, fa_versions, q_dtype, is_sink, is_causal, is_paged, kv_dtype)
     )
     return configs
 
@@ -95,7 +95,7 @@ def gen_cutlass_flash_attn_varlen_perf_configs():
 
     block_size = [64, 128]
     window_size = [(-1, -1)]
-    dtype = [torch.float16, torch.bfloat16]
+    output_dtype = [torch.float16, torch.bfloat16]
     soft_cap = [None]
     num_blocks = [16324]
     fa_versions = [2]
@@ -103,7 +103,7 @@ def gen_cutlass_flash_attn_varlen_perf_configs():
     is_sink = [False, True]
     is_causal = [False, True]
     is_paged = [False, True]
-    fp8_dtype = [torch.float8_e5m2, torch.float8_e4m3fn, None]
+    kv_dtype = [torch.float8_e5m2, torch.float8_e4m3fn, None]
 
     # configs = []
     # for model in model_lists:
@@ -112,11 +112,11 @@ def gen_cutlass_flash_attn_varlen_perf_configs():
     #     num_heads = [(model_config["num_attention_heads"], model_config["num_key_value_heads"])]
 
     #     configs += list(
-    #         itertools.product(num_seqs, query_lens, kv_lens, num_heads, head_size, block_size, window_size, dtype, soft_cap, num_blocks, fa_versions, q_dtype, is_sink, is_causal, is_paged, fp8_dtype)
+    #         itertools.product(num_seqs, query_lens, kv_lens, num_heads, head_size, block_size, window_size, output_dtype, soft_cap, num_blocks, fa_versions, q_dtype, is_sink, is_causal, is_paged, kv_dtype)
     #     )
     # configs = set(configs)  # remove duplicates
     # def sort_key(x):
-    #     (num_seq, query_len, kv_len, num_head, head_size, block_size, window_size, dtype_, soft_cap, num_blocks, fa_version, q_dtype, is_sink, is_causal, is_paged, fp8_dtype) = x
+    #     (num_seq, query_len, kv_len, num_head, head_size, block_size, window_size, output_dtype_, soft_cap, num_blocks, fa_version, q_dtype, is_sink, is_causal, is_paged, kv_dtype) = x
 
     #     return (
     #         num_seq,
@@ -126,7 +126,7 @@ def gen_cutlass_flash_attn_varlen_perf_configs():
     #         head_size,
     #         block_size,
     #         window_size,
-    #         str(dtype_),
+    #         str(output_dtype_),
     #         soft_cap if soft_cap is not None else -1,
     #         num_blocks,
     #         fa_version,
@@ -134,14 +134,14 @@ def gen_cutlass_flash_attn_varlen_perf_configs():
     #         is_sink,
     #         is_causal,
     #         is_paged,
-    #         str(fp8_dtype)
+    #         str(kv_dtype)
     #     )
     # configs = sorted(configs, key=sort_key)
 
     num_heads = [(32, 8)]
     head_size = [128]
     configs = list(
-        itertools.product(num_seqs, query_lens, kv_lens, num_heads, head_size, block_size, window_size, dtype, soft_cap, num_blocks, fa_versions, q_dtype, is_sink, is_causal, is_paged, fp8_dtype)
+        itertools.product(num_seqs, query_lens, kv_lens, num_heads, head_size, block_size, window_size, output_dtype, soft_cap, num_blocks, fa_versions, q_dtype, is_sink, is_causal, is_paged, kv_dtype)
     )
     return configs
 
@@ -153,7 +153,7 @@ def gen_cutlass_flash_attn_decode_correctness_configs():
     num_heads = [(4, 4), (8, 2), (10, 2), (16, 1)]
     head_size = [64, 128, 192, 256]
     block_size = [64, 128]
-    dtype = [torch.float16, torch.bfloat16]
+    output_dtype = [torch.float16, torch.bfloat16]
     soft_cap = [None]
     num_blocks = [32768, 2048]
     fa_versions = [2]
@@ -161,7 +161,7 @@ def gen_cutlass_flash_attn_decode_correctness_configs():
     is_sink = [False, True]
 
     configs = list(
-        itertools.product(seq_lens, num_heads, head_size, block_size, dtype, soft_cap,
+        itertools.product(seq_lens, num_heads, head_size, block_size, output_dtype, soft_cap,
                           num_blocks, fa_versions, q_dtype, is_sink)
     )
     return configs
@@ -176,7 +176,7 @@ def gen_cutlass_flash_attn_decode_perf_configs():
     num_heads = [(4, 4), (16, 1)]
     head_size = [64, 128, 256]
     block_size = [64, 128]
-    dtype = [torch.float16, torch.bfloat16]
+    output_dtype = [torch.float16, torch.bfloat16]
     soft_cap = [None]
     num_blocks = [2048]
     fa_versions = [2]
@@ -190,19 +190,19 @@ def gen_cutlass_flash_attn_decode_perf_configs():
         num_heads = [(model_config["num_attention_heads"], model_config["num_key_value_heads"])]
 
         configs += list(
-            itertools.product(seq_lens, num_heads, head_size, block_size, dtype, soft_cap,
+            itertools.product(seq_lens, num_heads, head_size, block_size, output_dtype, soft_cap,
                           num_blocks, fa_versions, q_dtype, is_sink)
         )
     configs = set(configs)  # remove duplicates
     def sort_key(x):
-        (seq_len, num_head, head_size, block_size, dtype_, soft_cap, num_blocks, fa_version, q_dtype, is_sink) = x
+        (seq_len, num_head, head_size, block_size, output_dtype_, soft_cap, num_blocks, fa_version, q_dtype, is_sink) = x
 
         return (
             seq_len,
             num_head,
             head_size,
             block_size,
-            str(dtype_),
+            str(output_dtype_),
             soft_cap if soft_cap is not None else -1,
             num_blocks,
             fa_version,
@@ -216,7 +216,7 @@ def gen_cutlass_flash_attn_decode_perf_configs():
     # num_heads = [(4, 4), (16, 1)]
     # head_size = [64, 128, 256]
     # configs = list(
-    #     itertools.product(seq_lens, num_heads, head_size, block_size, dtype, soft_cap,
+    #     itertools.product(seq_lens, num_heads, head_size, block_size, output_dtype, soft_cap,
     #                       num_blocks, fa_versions, q_dtype, is_sink)
     # )
     return configs

@@ -26,35 +26,35 @@ def calculate_flops(m, n, k):
     return 2 * m * n * k
 
 
-def calculate_memory_usage(m, n, k, num_experts, dtype, w_dtype=None):
-    io_memory = (m * k + m * n) * torch.tensor([], dtype=dtype).element_size() / (1024 ** 3)  # in GB
-    weight_memory = num_experts * k * n * torch.tensor([], dtype=dtype if w_dtype is None else w_dtype).element_size() / (1024 ** 3)  # in GB
+def calculate_memory_usage(m, n, k, num_experts, x_dtype, w_dtype=None):
+    io_memory = (m * k + m * n) * torch.tensor([], dtype=x_dtype).element_size() / (1024 ** 3)  # in GB
+    weight_memory = num_experts * k * n * torch.tensor([], dtype=x_dtype if w_dtype is None else w_dtype).element_size() / (1024 ** 3)  # in GB
     return io_memory + weight_memory
 
 
 def make_fused_moe_input(config):
-    mnk, e, topk, dtype, w_dtype, has_bias = config
+    mnk, e, topk, x_dtype, w_dtype, has_bias = config
     m, n, k = mnk
     input_len = m
     hidden_size = k
     intermediate_size = n
     num_experts = e
 
-    a = torch.randn((input_len, hidden_size), device=DEVICE, dtype=dtype) / 16
+    a = torch.randn((input_len, hidden_size), device=DEVICE, dtype=x_dtype) / 16
     w13 = torch.randn((num_experts, 2 * intermediate_size, hidden_size),
                       device=DEVICE,
-                      dtype=dtype) / 16
+                      dtype=x_dtype) / 16
     w2 = torch.randn((num_experts, hidden_size, intermediate_size),
                      device=DEVICE,
-                     dtype=dtype) / 16
+                     dtype=x_dtype) / 16
     ref_a = a.clone()
 
     if has_bias:
         w13_bias = torch.randn(
             (num_experts, 2 * intermediate_size), device=DEVICE,
-            dtype=dtype) / 16
+            dtype=x_dtype) / 16
         w2_bias = torch.randn(
-            (num_experts, hidden_size), device=DEVICE, dtype=dtype) / 16
+            (num_experts, hidden_size), device=DEVICE, dtype=x_dtype) / 16
     else:
         w13_bias = None
         w2_bias = None
@@ -94,11 +94,11 @@ def make_fused_moe_input(config):
         w13 = w13_fp8
         w2 = w2_fp8
 
-        ref_w13 = torch.empty_like(w13_fp8, dtype=dtype)
-        ref_w2 = torch.empty_like(w2_fp8, dtype=dtype)
+        ref_w13 = torch.empty_like(w13_fp8, dtype=x_dtype)
+        ref_w2 = torch.empty_like(w2_fp8, dtype=x_dtype)
         for i in range(num_experts):
-            ref_w13[i] = w13_fp8[i].to(dtype) * w13_scales[i]
-            ref_w2[i] = w2_fp8[i].to(dtype) * w2_scales[i]
+            ref_w13[i] = w13_fp8[i].to(x_dtype) * w13_scales[i]
+            ref_w2[i] = w2_fp8[i].to(x_dtype) * w2_scales[i]
     else:
         w13_scales = None
         w2_scales = None
@@ -111,7 +111,7 @@ def make_fused_moe_input(config):
 
 
 def calculate_diff(config):
-    _, e, topk, dtype, w_dtype, _ = config
+    _, e, topk, x_dtype, w_dtype, _ = config
     ref_a, ref_w13, w13_bias, ref_w2, w2_bias, flat_expert_weights, \
         flat_expert_indices, a, w13, w13_scales, w2, w2_scales, \
             expert_scores, expert_indices = make_fused_moe_input(config)
@@ -133,7 +133,7 @@ def calculate_diff(config):
                            activation="silu",
                            num_experts=e,
                            is_fp8=(w_dtype is not None))
-    if dtype == torch.float16:
+    if x_dtype == torch.float16:
         rtol = 1e-2
         atol = 1e-2
     else:
@@ -150,40 +150,30 @@ def calculate_diff(config):
 def get_benchmark(iterations):
     @triton.testing.perf_report(
         triton.testing.Benchmark(
-            x_names=["m", "n", "k", "num_experts", "topk", "dtype", "w_dtype", "has_bias"],
+            x_names=["m", "n", "k", "num_experts", "topk", "x_dtype", "w_dtype", "has_bias"],
             x_vals=[(*tuple(c)[0], *tuple(c)[1:]) for c in configs],
             line_arg="provider",
-            line_vals=["native", "vllm", "vllm_kernel_gemm1", "vllm_kernel_gemm2", "vllm_kernel_gather", "vllm_kernel_gemm1_tflops", "vllm_kernel_gemm2_tflops", "vllm_kernel_gemm1_memory", "vllm_kernel_gemm2_memory"],
-            line_names=["native", "vllm", "vllm_kernel_gemm1", "vllm_kernel_gemm2", "vllm_kernel_gather", "vllm_kernel_gemm1_tflops", "vllm_kernel_gemm2_tflops", "vllm_kernel_gemm1_memory", "vllm_kernel_gemm2_memory"],
-            styles=[("red", "-"), ("blue", "-"), ("green", "-"), ("orange", "-"), ("purple", "-"), ("green", "--"), ("orange", "--"), ("green", ":"), ("orange", ":")],
+            line_vals=["vllm", "vllm_kernel_gemm1", "vllm_kernel_gemm2", "vllm_kernel_gather", "vllm_kernel_gemm1_tflops", "vllm_kernel_gemm2_tflops", "vllm_kernel_gemm1_memory", "vllm_kernel_gemm2_memory"],
+            line_names=["vllm(us)", "vllm_kernel_gemm1(us)", "vllm_kernel_gemm2(us)", "vllm_kernel_gather(us)", "vllm_kernel_gemm1_tflops", "vllm_kernel_gemm2_tflops", "vllm_kernel_gemm1_memory(GB/s)", "vllm_kernel_gemm2_memory(GB/s)"],
+            styles=[("blue", "-"), ("green", "-"), ("orange", "-"), ("purple", "-"), ("green", "--"), ("orange", "--"), ("green", ":"), ("orange", ":")],
             ylabel="Latency (us)",
-            plot_name="moe-cutlass-vs-native",
+            plot_name="fused_moe-cutlass",
             args={},
         )
     )
-    def benchmark(m, n, k, num_experts, topk, dtype, w_dtype, has_bias, provider, iterations=iterations):
-        print(f"Running config: {(m, n, k, num_experts, topk, dtype, w_dtype, has_bias)}, Provider: {provider}", flush=True)
+    def benchmark(m, n, k, num_experts, topk, x_dtype, w_dtype, has_bias, provider, iterations=iterations):
+        print(f"Running config: {(m, n, k, num_experts, topk, x_dtype, w_dtype, has_bias)}, Provider: {provider}", flush=True)
         start = torch.xpu.Event(enable_timing=True)
         end = torch.xpu.Event(enable_timing=True)
         total_latency = 0.0
         ms = 0.0
         assert iterations > 5, "Iterations should be greater than 5 to have enough warmup iterations."
 
-        ref_a, ref_w13, w13_bias, ref_w2, w2_bias, flat_expert_weights, \
-            flat_expert_indices, a, w13, w13_scales, w2, w2_scales, \
-                expert_scores, expert_indices = make_fused_moe_input(config=((m, n, k), num_experts, topk, dtype, w_dtype, has_bias))
+        _, _, w13_bias, _, w2_bias, _, \
+            _, a, w13, w13_scales, w2, w2_scales, \
+                expert_scores, expert_indices = make_fused_moe_input(config=((m, n, k), num_experts, topk, x_dtype, w_dtype, has_bias))
 
-        if provider == "native":
-            for index in range(iterations):
-                start.record()
-                ref_fused_moe(ref_a, ref_w13, w13_bias, ref_w2, w2_bias,
-                    flat_expert_weights, flat_expert_indices, topk,
-                    "silu", num_experts)
-                end.record()
-                end.synchronize()
-                if index >= 5:  # skip the first 5 iterations for warmup
-                    total_latency += start.elapsed_time(end)
-        elif provider == "vllm":
+        if provider == "vllm":
             for index in range(iterations):
                 start.record()
                 xpu_fused_moe(hidden_states=a,
@@ -241,7 +231,7 @@ def get_benchmark(iterations):
                 torch.xpu.synchronize()
                 ms = total_latency / (iterations - 5)
                 clear_xpu_cache()
-                memory_usage_GB = calculate_memory_usage(m, n, k, active_experts, dtype, w_dtype)
+                memory_usage_GB = calculate_memory_usage(m, n, k, active_experts, x_dtype, w_dtype)
                 return memory_usage_GB / (ms / 1000)  # GB/s
 
         torch.xpu.synchronize()

@@ -29,7 +29,7 @@ def calculate_flops(num_query_heads, query_lens, kv_lens, head_size, is_causal):
 
 
 def make_varlen_with_paged_kv_input(config):
-    num_seqs, query_lens, kv_lens, num_heads, head_size, block_size, window_size, dtype, _, num_blocks, _, q_dtype, is_sink, is_causal, is_paged, fp8_dtype = config
+    num_seqs, query_lens, kv_lens, num_heads, head_size, block_size, window_size, output_dtype, _, num_blocks, _, q_dtype, is_sink, is_causal, is_paged, kv_dtype = config
     query_lens = query_lens.split(",")
     query_lens = [int(x) for x in query_lens]
     kv_lens = kv_lens.split(",")
@@ -44,18 +44,18 @@ def make_varlen_with_paged_kv_input(config):
     query = torch.randn(sum(query_lens),
                         num_query_heads,
                         head_size,
-                        dtype=dtype)
+                        dtype=output_dtype)
     if is_paged:
         key_cache = torch.randn(num_blocks,
                                 block_size,
                                 num_kv_heads,
                                 head_size,
-                                dtype=dtype)
+                                dtype=output_dtype)
     else:
         key_cache = torch.randn(sum(kv_lens),
                                 num_query_heads,
                                 head_size,
-                                dtype=dtype)
+                                dtype=output_dtype)
     value_cache = torch.randn_like(key_cache)
 
     cu_query_lens = torch.tensor([0] + query_lens,
@@ -73,7 +73,7 @@ def make_varlen_with_paged_kv_input(config):
                                  dtype=torch.int32)
     sink = None
     if is_sink:
-        sink = torch.randn(num_query_heads, dtype=dtype)
+        sink = torch.randn(num_query_heads, dtype=output_dtype)
 
     maybe_quantized_query = query
     maybe_quantized_key_cache = key_cache
@@ -86,12 +86,12 @@ def make_varlen_with_paged_kv_input(config):
     if is_fp8_query:
         q_descale = (torch.abs(query).max() / 200).to(torch.float32)
         maybe_quantized_query = (query / q_descale).to(q_dtype)
-    is_fp8kv = fp8_dtype is not None
+    is_fp8kv = kv_dtype is not None
     if is_fp8kv:
         k_descale = (torch.abs(key_cache).max() / 200).to(torch.float32)
         v_descale = (torch.abs(value_cache).max() / 200).to(torch.float32)
-        maybe_quantized_key_cache = (key_cache / k_descale).to(fp8_dtype)
-        maybe_quantized_value_cache = (value_cache / v_descale).to(fp8_dtype)
+        maybe_quantized_key_cache = (key_cache / k_descale).to(kv_dtype)
+        maybe_quantized_value_cache = (value_cache / v_descale).to(kv_dtype)
     return (maybe_quantized_query, maybe_quantized_key_cache, maybe_quantized_value_cache,
             max_query_len, cu_query_lens, max_kv_len, cu_kv_lens, seq_k,
             q_descale, k_descale, v_descale, scale, is_causal, block_tables,
@@ -100,7 +100,7 @@ def make_varlen_with_paged_kv_input(config):
 
 
 def calculate_diff_varlen_paged_kv(config):
-    _, _, _, _, _, _, window_size, dtype, _, _, _, q_dtype, _, is_causal, is_paged, fp8_dtype = config
+    _, _, _, _, _, _, window_size, output_dtype, _, _, _, q_dtype, _, is_causal, is_paged, kv_dtype = config
     maybe_quantized_query, maybe_quantized_key_cache, maybe_quantized_value_cache, \
         max_query_len, cu_query_lens, max_kv_len, cu_kv_lens, \
         seq_k, q_descale, k_descale, v_descale, scale, is_causal, \
@@ -163,13 +163,13 @@ def calculate_diff_varlen_paged_kv(config):
                                 window_size_right=window_size[1],
                                 is_fp8kv=is_fp8kv,
                                 is_fp8_query=is_fp8_query,
-                                dtype=dtype)
+                                dtype=output_dtype)
     atol, rtol = 1e-2, 1e-2
     if q_dtype is not None:
         atol, rtol = 1.5e-1, 1.5e-1
     if window_size[0] != -1 or window_size[1] != -1:
         atol, rtol = 1.5e-2, 1.5e-2
-    if fp8_dtype is not None:
+    if kv_dtype is not None:
         atol, rtol = 1.5e-2, 1.5e-2
     try:
         torch.testing.assert_close(output, ref_output, atol=atol, rtol=rtol), \
@@ -181,28 +181,28 @@ def calculate_diff_varlen_paged_kv(config):
 
 def benchmark_varlen_with_paged_kv(
     num_seqs, query_lens, kv_lens, num_heads, 
-    head_size, block_size, window_size, dtype, 
+    head_size, block_size, window_size, output_dtype, 
     soft_cap, num_blocks, fa_versions, q_dtype, 
-    is_sink, is_causal, is_paged, fp8_dtype, 
+    is_sink, is_causal, is_paged, kv_dtype, 
     provider, iterations=20
 ):
     maybe_quantized_query, maybe_quantized_key_cache, maybe_quantized_value_cache, \
         max_query_len, cu_query_lens, max_kv_len, cu_kv_lens, \
         seq_k, q_descale, k_descale, v_descale, scale, is_causal, \
-        block_tables, window_size, sink, scale_shape, query, \
-        query_lens, kv_lens, is_fp8kv, is_fp8_query, max_num_blocks_per_seq = \
+        block_tables, window_size, sink, scale_shape, _, \
+        query_lens, kv_lens, _, _, max_num_blocks_per_seq = \
             make_varlen_with_paged_kv_input(config=(num_seqs,
                 query_lens, kv_lens, num_heads, head_size,
-                block_size, window_size, dtype, soft_cap,
+                block_size, window_size, output_dtype, soft_cap,
                 num_blocks, fa_versions, q_dtype, is_sink,
-                is_causal, is_paged, fp8_dtype))
+                is_causal, is_paged, kv_dtype))
     num_query_heads = num_heads[0]
 
     print(f"Running config: {(num_seqs, query_lens, kv_lens,
                               num_heads, head_size, block_size,
-                              window_size, dtype, soft_cap, num_blocks,
+                              window_size, output_dtype, soft_cap, num_blocks,
                               fa_versions, q_dtype, is_sink, is_causal,
-                              is_paged, fp8_dtype)}, Provider: {provider}", flush=True)
+                              is_paged, kv_dtype)}, Provider: {provider}", flush=True)
     assert iterations > 5, "Number of iterations should be greater than 5 to account for warmup"
 
     start = torch.xpu.Event(enable_timing=True)
@@ -210,41 +210,8 @@ def benchmark_varlen_with_paged_kv(
     total_latency = 0.0
     ms = 0.0
 
-    if provider == "native":
+    if is_paged:
         for index in range(iterations):
-            block_tables = torch.randint(0,
-                                        num_blocks,
-                                        (num_seqs, max_num_blocks_per_seq),
-                                        dtype=torch.int32)
-            start.record()
-            ref_paged_attn(query=query,
-                key_cache=maybe_quantized_key_cache,
-                value_cache=maybe_quantized_value_cache,
-                query_lens=query_lens,
-                kv_lens=kv_lens,
-                block_tables=block_tables,
-                scale=scale,
-                casual=is_causal,
-                is_paged=is_paged,
-                sink=sink,
-                q_descale=q_descale,
-                k_descale=k_descale,
-                v_descale=v_descale,
-                window_size_left=window_size[0],
-                window_size_right=window_size[1],
-                is_fp8kv=is_fp8kv,
-                is_fp8_query=is_fp8_query,
-                dtype=dtype)
-            end.record()
-            end.synchronize()
-            if index >= 5:  # skip the first 5 iterations for warmup
-                total_latency += start.elapsed_time(end)
-    elif is_paged:
-        for index in range(iterations):
-            query = torch.randn(sum(query_lens),
-                                num_query_heads,
-                                head_size,
-                                dtype=dtype)
             block_tables = torch.randint(0,
                                         num_blocks,
                                         (num_seqs, max_num_blocks_per_seq),
@@ -359,18 +326,18 @@ def benchmark_varlen_with_paged_kv(
 def get_benchmark_varlen_with_paged_kv(iterations=20):
     @triton.testing.perf_report(
         triton.testing.Benchmark(
-            x_names=["num_seqs", "query_lens", "kv_lens", "num_heads", "head_size", "block_size", "window_size", "dtype", "soft_cap", "num_blocks", "fa_versions", "q_dtype", "is_sink", "is_causal", "is_paged", "fp8_dtype"],
+            x_names=["num_seqs", "query_lens", "kv_lens", "num_heads", "head_size", "block_size", "window_size", "output_dtype", "soft_cap", "num_blocks", "fa_versions", "q_dtype", "is_sink", "is_causal", "is_paged", "kv_dtype"],
             x_vals=[tuple(c) for c in configs],
             line_arg="provider",
-            line_vals=["native", "flash", "flash_kernel_time", "flash_kernel_TFLOPS"],
-            line_names=["Native", "FlashAttention", "FlashAttention_Kernel_Time", "FlashAttention_TFLOPS"],
-            styles=[("red", "-"), ("blue", "-"), ("green", "-"), ("purple", "-")],
+            line_vals=["flash", "flash_kernel_time", "flash_kernel_TFLOPS"],
+            line_names=["FlashAttention", "FlashAttention_Kernel_Time", "FlashAttention_TFLOPS"],
+            styles=[("blue", "-"), ("green", "-"), ("purple", "-")],
             ylabel="Latency (us)",
-            plot_name="flash-attn-varlen-vs-native",
+            plot_name="flash-attn-varlen",
             args={},
         )
     )
-    def benchmark(num_seqs, query_lens, kv_lens, num_heads, head_size, block_size, window_size, dtype, soft_cap, num_blocks, fa_versions, q_dtype, is_sink, is_causal, is_paged, fp8_dtype, provider):
+    def benchmark(num_seqs, query_lens, kv_lens, num_heads, head_size, block_size, window_size, output_dtype, soft_cap, num_blocks, fa_versions, q_dtype, is_sink, is_causal, is_paged, kv_dtype, provider):
         return benchmark_varlen_with_paged_kv(
             num_seqs=num_seqs,
             query_lens=query_lens,
@@ -379,7 +346,7 @@ def get_benchmark_varlen_with_paged_kv(iterations=20):
             head_size=head_size,
             block_size=block_size,
             window_size=window_size,
-            dtype=dtype,
+            output_dtype=output_dtype,
             soft_cap=soft_cap,
             num_blocks=num_blocks,
             fa_versions=fa_versions,
@@ -387,7 +354,7 @@ def get_benchmark_varlen_with_paged_kv(iterations=20):
             is_sink=is_sink,
             is_causal=is_causal,
             is_paged=is_paged,
-            fp8_dtype=fp8_dtype,
+            kv_dtype=kv_dtype,
             provider=provider,
             iterations=iterations,
         )

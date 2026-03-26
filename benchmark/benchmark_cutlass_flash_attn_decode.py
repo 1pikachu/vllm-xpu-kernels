@@ -22,15 +22,14 @@ def clear_xpu_cache():
     torch.xpu.synchronize()
 
 
-def calculate_memory_usage(num_seqs, max_kv_len, block_size, num_kv_heads, head_size, dtype):
+def calculate_memory_usage(kv_len_sum, num_kv_heads, head_size, output_dtype):
     # Memory for key and value caches
-    kv_blocks = (max_kv_len + block_size - 1) // block_size
-    kv_cache_memory = 2 * num_seqs * kv_blocks * block_size * num_kv_heads * head_size * torch.tensor([], dtype=dtype).element_size()
+    kv_cache_memory = 2 * kv_len_sum * num_kv_heads * head_size * torch.tensor([], dtype=output_dtype).element_size()
     return kv_cache_memory / (1024 ** 3)  # Convert to GB
 
 
 def make_decode_with_paged_kv_input(config):
-    seq_lens, num_heads, head_size, block_size, dtype, _, num_blocks, _, q_dtype, is_sink = config
+    seq_lens, num_heads, head_size, block_size, output_dtype, _, num_blocks, _, q_dtype, is_sink = config
     # if num_heads == (16, 1) and head_size == 256:
     #     pytest.skip("skip test cases that may run out of SLM.")
     num_seqs = int(seq_lens.split(",")[0])
@@ -46,12 +45,12 @@ def make_decode_with_paged_kv_input(config):
     query = torch.randn(sum(query_lens),
                         num_query_heads,
                         head_size,
-                        dtype=dtype)
+                        dtype=output_dtype)
     key_cache = torch.randn(num_blocks,
                             block_size,
                             num_kv_heads,
                             head_size,
-                            dtype=dtype)
+                            dtype=output_dtype)
     value_cache = torch.randn_like(key_cache)
     cu_query_lens = torch.tensor([0] + query_lens,
                                  dtype=torch.int32).cumsum(dim=0,
@@ -66,7 +65,7 @@ def make_decode_with_paged_kv_input(config):
                                  dtype=torch.int32)
     sink = None
     if is_sink:
-        sink = torch.randn(num_query_heads, dtype=dtype)
+        sink = torch.randn(num_query_heads, dtype=output_dtype)
 
     maybe_quantized_query = query
     maybe_quantized_key_cache = key_cache
@@ -134,51 +133,27 @@ def calculate_diff_decode_paged_kv(config):
 
 
 def benchmark_decode_with_paged_kv(
-    seq_lens, num_heads, head_size, block_size, dtype, soft_cap,
+    seq_lens, num_heads, head_size, block_size, output_dtype, soft_cap,
     num_blocks, fa_versions, q_dtype, is_sink, provider, iterations
 ):
     maybe_quantized_query, maybe_quantized_key_cache, \
         maybe_quantized_value_cache, max_query_len, cu_query_lens, \
-        max_kv_len, seq_k, scale, block_tables, sink, query, \
-        key_cache, value_cache, query_lens, kv_lens = make_decode_with_paged_kv_input(
-            config=(seq_lens, num_heads, head_size, block_size, dtype, soft_cap, num_blocks, fa_versions, q_dtype, is_sink))
+        max_kv_len, seq_k, scale, block_tables, sink, _, \
+        _, _, _, _ = make_decode_with_paged_kv_input(
+            config=(seq_lens, num_heads, head_size, block_size, output_dtype, soft_cap, num_blocks, fa_versions, q_dtype, is_sink))
 
     num_seqs = int(seq_lens.split(",")[0])
     max_num_blocks_per_seq = (max_kv_len + block_size - 1) // block_size
 
     print(f"Running config: {(seq_lens, num_heads, head_size, block_size, 
-                              dtype, soft_cap, num_blocks, fa_versions, q_dtype, is_sink)}, Provider: {provider}", flush=True)
+                              output_dtype, soft_cap, num_blocks, fa_versions, q_dtype, is_sink)}, Provider: {provider}", flush=True)
     assert iterations > 5, "Number of iterations should be greater than 5 to account for warmup"
     start = torch.xpu.Event(enable_timing=True)
     end = torch.xpu.Event(enable_timing=True)
     total_latency = 0.0
     ms = 0.0
 
-    if provider == "native":
-        for index in range(iterations):
-            block_tables = torch.randint(0,
-                                 num_blocks,
-                                 (num_seqs, max_num_blocks_per_seq),
-                                 dtype=torch.int32)
-            start.record()
-            ref_paged_attn(query=query,
-                key_cache=key_cache,
-                value_cache=value_cache,
-                query_lens=query_lens,
-                kv_lens=kv_lens,
-                block_tables=block_tables,
-                scale=scale,
-                casual=False,
-                is_paged=True,
-                sink=sink,
-                window_size_left=-1,
-                window_size_right=-1)
-            end.record()
-            end.synchronize()
-            if index >= 5:  # skip the first 5 iterations for warmup
-                total_latency += start.elapsed_time(end)
-
-    elif provider == "flash":
+    if provider == "flash":
         for index in range(iterations):
             block_tables = torch.randint(0,
                                         num_blocks,
@@ -226,7 +201,7 @@ def benchmark_decode_with_paged_kv(
         if provider == "flash_memBandwidth":
             torch.xpu.synchronize()
             ms = total_latency / (iterations - 5)
-            memory_load_GB = calculate_memory_usage(num_seqs, max_kv_len, block_size, num_heads[1], head_size, dtype)
+            memory_load_GB = calculate_memory_usage(seq_k.sum().item(), num_heads[1], head_size, output_dtype)
             clear_xpu_cache()
             return memory_load_GB / (ms / 1000)
     torch.xpu.synchronize()
@@ -239,26 +214,26 @@ def benchmark_decode_with_paged_kv(
 def get_benchmark_decode_with_paged_kv(iterations=20):
     @triton.testing.perf_report(
         triton.testing.Benchmark(
-            x_names=["seq_lens", "num_heads", "head_size", "block_size", "dtype", "soft_cap",
+            x_names=["seq_lens", "num_heads", "head_size", "block_size", "output_dtype", "soft_cap",
                      "num_blocks", "fa_versions", "q_dtype", "is_sink"],
             x_vals=[tuple(c) for c in configs],
             line_arg="provider",
-            line_vals=["native", "flash", "flash_kernelTime", "flash_memBandwidth"],
-            line_names=["Native", "FlashAttention", "FlashAttention_kernelTime", "FlashAttention_memBandwidth"],
-            styles=[("red", "-"), ("blue", "-"), ("green", "-"), ("purple", "-")],
+            line_vals=["flash", "flash_kernelTime", "flash_memBandwidth"],
+            line_names=["FlashAttention(us)", "FlashAttention_kernelTime(us)", "FlashAttention_memBandwidth(GB/s)"],
+            styles=[("blue", "-"), ("green", "-"), ("purple", "-")],
             ylabel="Latency (us)",
-            plot_name="flash-attn-decode-vs-native",
+            plot_name="flash-attn-decode",
             args={},
         )
     )
-    def benchmark(seq_lens, num_heads, head_size, block_size, dtype, soft_cap,
+    def benchmark(seq_lens, num_heads, head_size, block_size, output_dtype, soft_cap,
                           num_blocks, fa_versions, q_dtype, is_sink, provider):
         return benchmark_decode_with_paged_kv(
             seq_lens=seq_lens,
             num_heads=num_heads,
             head_size=head_size,
             block_size=block_size,
-            dtype=dtype,
+            output_dtype=output_dtype,
             soft_cap=soft_cap,
             num_blocks=num_blocks,
             fa_versions=fa_versions,
