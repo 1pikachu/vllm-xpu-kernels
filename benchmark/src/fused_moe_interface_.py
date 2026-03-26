@@ -107,7 +107,7 @@ def implement_zp(qweight):
 
     return result
 
-# clone_vllm_xpu_kernel,main,https://github.com/vllm-project/vllm-xpu-kernels.git/tree/3cf991b
+# vllm_xpu_kernel,main,https://github.com/vllm-project/vllm-xpu-kernels/tree/3cf991b
 def xpu_fused_moe_CalKernelTime(hidden_states,
                   w13,
                   w13_scales,
