@@ -17,6 +17,25 @@ except ImportError as e:
 DEFAULT_FA_VERSION = 2
 
 
+def _varlen_fwd_num_args() -> int:
+    """Return the number of positional args accepted by the installed
+    ``_vllm_fa2_C::varlen_fwd`` op. Used to stay compatible with both the
+    legacy schema (25 args) and the newer one (28 args, with is_mix_batch /
+    splits_per_seq / work_list).
+    """
+    if not FA2_AVAILABLE:
+        return 0
+    try:
+        return len(
+            torch.ops._vllm_fa2_C.varlen_fwd._schema.arguments)  # type: ignore[attr-defined]
+    except Exception:
+        # Fallback to the legacy arg count if introspection fails.
+        return 25
+
+
+_VARLEN_FWD_NARGS = _varlen_fwd_num_args()
+
+
 def maybe_contiguous(x):
     return x.contiguous() if x is not None and x.stride(-1) != 1 else x
 
@@ -275,7 +294,7 @@ def flash_attn_varlen_func_CalKernelTime(
 
         if start_event is not None:
             start_event.record()
-        out, softmax_lse = torch.ops._vllm_fa2_C.varlen_fwd(
+        varlen_fwd_args = [
             q,
             k,
             v,
@@ -303,10 +322,18 @@ def flash_attn_varlen_func_CalKernelTime(
             return_softmax_lse and dropout_p > 0,
             None,
             num_splits_kv,
-            is_mix_batch,
-            splits_per_seq_dev,
-            work_list_dev,
-        )
+        ]
+        # Newer kernel binaries (28-arg schema) accept three extra trailing
+        # args for grouped split-KV / mixed-batch decode; older binaries
+        # (25-arg schema) do not. Forward them only when the installed op
+        # actually advertises them.
+        if _VARLEN_FWD_NARGS >= 28:
+            varlen_fwd_args.extend([
+                is_mix_batch,
+                splits_per_seq_dev,
+                work_list_dev,
+            ])
+        out, softmax_lse = torch.ops._vllm_fa2_C.varlen_fwd(*varlen_fwd_args)
         if end_event is not None:
             end_event.record()
     else:
