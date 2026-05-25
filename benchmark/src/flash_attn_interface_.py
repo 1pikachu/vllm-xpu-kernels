@@ -26,8 +26,15 @@ def _varlen_fwd_num_args() -> int:
     if not FA2_AVAILABLE:
         return 0
     try:
-        return len(
-            torch.ops._vllm_fa2_C.varlen_fwd._schema.arguments)  # type: ignore[attr-defined]
+        op = torch.ops._vllm_fa2_C.varlen_fwd  # OpOverloadPacket
+        # OpOverloadPacket has no `_schema`; resolve to a concrete overload.
+        overload = getattr(op, "default", None)
+        if overload is None:
+            overload_names = op.overloads()  # type: ignore[attr-defined]
+            if not overload_names:
+                return 25
+            overload = getattr(op, overload_names[0])
+        return len(overload._schema.arguments)
     except Exception:
         # Fallback to the legacy arg count if introspection fails.
         return 25
