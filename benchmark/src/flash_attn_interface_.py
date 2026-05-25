@@ -20,7 +20,7 @@ DEFAULT_FA_VERSION = 2
 def _varlen_fwd_num_args() -> int:
     """Return the number of positional args accepted by the installed
     ``_vllm_fa2_C::varlen_fwd`` op. Used to stay compatible with both the
-    legacy schema (25 args) and the newer one (28 args, with is_mix_batch /
+    legacy schema (25 args) and the newer one (28 args, with mix_batch /
     splits_per_seq / work_list).
     """
     if not FA2_AVAILABLE:
@@ -31,13 +31,20 @@ def _varlen_fwd_num_args() -> int:
         overload = getattr(op, "default", None)
         if overload is None:
             overload_names = op.overloads()  # type: ignore[attr-defined]
-            if not overload_names:
-                return 25
-            overload = getattr(op, overload_names[0])
-        return len(overload._schema.arguments)
+            for name in overload_names:
+                # Default overload is reported as '' on some torch builds;
+                # access it via the 'default' attribute.
+                attr = name if name else "default"
+                overload = getattr(op, attr, None)
+                if overload is not None:
+                    break
+        if overload is not None and hasattr(overload, "_schema"):
+            return len(overload._schema.arguments)
     except Exception:
-        # Fallback to the legacy arg count if introspection fails.
-        return 25
+        pass
+    # Fallback: assume the newer schema (28 args). The legacy 25-arg
+    # schema is no longer shipped by current vllm-xpu-kernels builds.
+    return 28
 
 
 _VARLEN_FWD_NARGS = _varlen_fwd_num_args()
