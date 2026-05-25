@@ -17,39 +17,6 @@ except ImportError as e:
 DEFAULT_FA_VERSION = 2
 
 
-def _varlen_fwd_num_args() -> int:
-    """Return the number of positional args accepted by the installed
-    ``_vllm_fa2_C::varlen_fwd`` op. Used to stay compatible with both the
-    legacy schema (25 args) and the newer one (28 args, with mix_batch /
-    splits_per_seq / work_list).
-    """
-    if not FA2_AVAILABLE:
-        return 0
-    try:
-        op = torch.ops._vllm_fa2_C.varlen_fwd  # OpOverloadPacket
-        # OpOverloadPacket has no `_schema`; resolve to a concrete overload.
-        overload = getattr(op, "default", None)
-        if overload is None:
-            overload_names = op.overloads()  # type: ignore[attr-defined]
-            for name in overload_names:
-                # Default overload is reported as '' on some torch builds;
-                # access it via the 'default' attribute.
-                attr = name if name else "default"
-                overload = getattr(op, attr, None)
-                if overload is not None:
-                    break
-        if overload is not None and hasattr(overload, "_schema"):
-            return len(overload._schema.arguments)
-    except Exception:
-        pass
-    # Fallback: assume the newer schema (28 args). The legacy 25-arg
-    # schema is no longer shipped by current vllm-xpu-kernels builds.
-    return 28
-
-
-_VARLEN_FWD_NARGS = _varlen_fwd_num_args()
-
-
 def maybe_contiguous(x):
     return x.contiguous() if x is not None and x.stride(-1) != 1 else x
 
@@ -336,17 +303,10 @@ def flash_attn_varlen_func_CalKernelTime(
             return_softmax_lse and dropout_p > 0,
             None,
             num_splits_kv,
+            is_mix_batch,
+            splits_per_seq_dev,
+            work_list_dev,
         ]
-        # Newer kernel binaries (28-arg schema) accept three extra trailing
-        # args for grouped split-KV / mixed-batch decode; older binaries
-        # (25-arg schema) do not. Forward them only when the installed op
-        # actually advertises them.
-        if _VARLEN_FWD_NARGS >= 28:
-            varlen_fwd_args.extend([
-                is_mix_batch,
-                splits_per_seq_dev,
-                work_list_dev,
-            ])
         out, softmax_lse = torch.ops._vllm_fa2_C.varlen_fwd(*varlen_fwd_args)
         if end_event is not None:
             end_event.record()
